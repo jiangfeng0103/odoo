@@ -111,7 +111,7 @@ class configmanager(object):
         group.add_option("--addons-path", dest="addons_path",
                          help="specify additional addons paths (separated by commas).",
                          action="callback", callback=self._check_addons_path, nargs=1, type="string")
-        group.add_option("--load", dest="server_wide_modules", help="Comma-separated list of server-wide modules.", my_default='web,web_kanban')
+        group.add_option("--load", dest="server_wide_modules", help="Comma-separated list of server-wide modules.", my_default='web')
 
         group.add_option("-D", "--data-dir", dest="data_dir", my_default=_get_default_datadir(),
                          help="Directory where to store Odoo data")
@@ -374,7 +374,7 @@ class configmanager(object):
             self.options['pidfile'] = False
         # and the server_wide_modules
         if self.options['server_wide_modules'] in ('', 'None', 'False'):
-            self.options['server_wide_modules'] = 'web,web_kanban'
+            self.options['server_wide_modules'] = 'web'
 
         # if defined dont take the configfile value even if the defined value is None
         keys = ['xmlrpc_interface', 'xmlrpc_port', 'longpolling_port',
@@ -510,8 +510,7 @@ class configmanager(object):
             for sec in p.sections():
                 if sec == 'options':
                     continue
-                if not self.misc.has_key(sec):
-                    self.misc[sec]= {}
+                self.misc.setdefault(sec, {})
                 for (name, value) in p.items(sec):
                     if value=='True' or value=='true':
                         value = True
@@ -552,7 +551,7 @@ class configmanager(object):
             try:
                 p.write(file(self.rcfile, 'w'))
                 if not rc_exists:
-                    os.chmod(self.rcfile, 0600)
+                    os.chmod(self.rcfile, 0o600)
             except IOError:
                 sys.stderr.write("ERROR: couldn't write the config file\n")
 
@@ -586,9 +585,9 @@ class configmanager(object):
             try:
                 # bootstrap parent dir +rwx
                 if not os.path.exists(add_dir):
-                    os.makedirs(add_dir, 0700)
+                    os.makedirs(add_dir, 0o700)
                 # try to make +rx placeholder dir, will need manual +w to activate it
-                os.makedirs(d, 0500)
+                os.makedirs(d, 0o500)
             except OSError:
                 logging.getLogger(__name__).debug('Failed to create addons data dir %s', d)
         return d
@@ -597,7 +596,7 @@ class configmanager(object):
     def session_dir(self):
         d = os.path.join(self['data_dir'], 'sessions')
         if not os.path.exists(d):
-            os.makedirs(d, 0700)
+            os.makedirs(d, 0o700)
         else:
             assert os.access(d, os.W_OK), \
                 "%s: directory is not writable" % d

@@ -10,6 +10,7 @@ import werkzeug
 from werkzeug.utils import escape as _escape
 from itertools import chain, izip, tee
 import __builtin__
+from functools import reduce
 builtin_defaults = {name: getattr(__builtin__, name) for name in dir(__builtin__)}
 
 try:
@@ -281,9 +282,9 @@ class QWeb(object):
             _options['ast_calls'] = []
             def_name = self._create_def(_options, body, prefix='template_%s' % name.replace('.', '_'))
             _options['ast_calls'] += ast_calls
-        except QWebException, e:
+        except QWebException as e:
             raise e
-        except Exception, e:
+        except Exception as e:
             path = _options['last_path_node']
             node = element.getroottree().xpath(path)
             raise QWebException("Error when compiling AST", e, path, etree.tostring(node[0]), name)
@@ -301,9 +302,9 @@ class QWeb(object):
             ns = {}
             unsafe_eval(compile(astmod, '<template>', 'exec'), ns)
             compiled = ns[def_name]
-        except QWebException, e:
+        except QWebException as e:
             raise e
-        except Exception, e:
+        except Exception as e:
             path = _options['last_path_node']
             node = element.getroottree().xpath(path)
             raise QWebException("Error when compiling AST", e, path, node and etree.tostring(node[0]), name)
@@ -315,9 +316,9 @@ class QWeb(object):
             values = dict(self.default_values(), **values)
             try:
                 return compiled(self, append, values, options, log)
-            except QWebException, e:
+            except QWebException as e:
                 raise e
-            except Exception, e:
+            except Exception as e:
                 path = log['last_path_node']
                 element, document = self.get_template(template, options)
                 node = element.getroottree().xpath(path)
@@ -341,9 +342,9 @@ class QWeb(object):
         else:
             try:
                 document = options.get('load', self.load)(template, options)
-            except QWebException, e:
+            except QWebException as e:
                 raise e
-            except Exception, e:
+            except Exception as e:
                 raise QWebException("load could not load template", name=template)
 
         if document is not None:

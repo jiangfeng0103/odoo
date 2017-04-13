@@ -30,6 +30,7 @@ import operator
 import pytz
 import re
 from collections import defaultdict, MutableMapping, OrderedDict
+from contextlib import closing
 from inspect import getmembers, currentframe
 from operator import attrgetter, itemgetter
 
@@ -940,7 +941,7 @@ class BaseModel(object):
                 valid = names and not (set(names) & field_names)
                 valid = valid or func(self)
                 extra_error = None
-            except Exception, e:
+            except Exception as e:
                 _logger.debug('Exception while validating constraint', exc_info=True)
                 valid = False
                 extra_error = tools.ustr(e)
@@ -963,9 +964,9 @@ class BaseModel(object):
             if set(check._constrains) & field_names:
                 try:
                     check(self)
-                except ValidationError, e:
+                except ValidationError as e:
                     raise
-                except Exception, e:
+                except Exception as e:
                     raise ValidationError("%s\n\n%s" % (_("Error while validating constraint"), tools.ustr(e)))
 
     @api.model
@@ -1206,14 +1207,14 @@ class BaseModel(object):
 
     @api.model
     def load_views(self, views, options=None):
-        """ Returns the fields_views of given views, and optionally filters and fields.
+        """ Returns the fields_views of given views, along with the fields of
+            the current model, and optionally its filters for the given action.
 
         :param views: list of [view_id, view_type]
         :param options['toolbar']: True to include contextual actions when loading fields_views
         :param options['load_filters']: True to return the model's filters
         :param options['action_id']: id of the action to get the filters
-        :param options['load_fields']: True to load the model's fields
-        :return: dictionary with fields_views, filters and fields
+        :return: dictionary with fields_views, fields and optionally filters
         """
         options = options or {}
         result = {}
@@ -1224,12 +1225,11 @@ class BaseModel(object):
                                          toolbar=toolbar if v_type != 'search' else False)
             for [v_id, v_type] in views
         }
+        result['fields'] = self.fields_get()
 
         if options.get('load_filters'):
             result['filters'] = self.env['ir.filters'].get_filters(self._name, options.get('action_id'))
 
-        if options.get('load_fields'):
-            result['fields'] = self.fields_get()
 
         return result
 
@@ -5090,45 +5090,61 @@ def itemgetter_tuple(items):
         return lambda gettable: (gettable[items[0]],)
     return operator.itemgetter(*items)
 
-def convert_pgerror_23502(model, fields, info, e):
-    m = re.match(r'^null value in column "(?P<field>\w+)" violates '
-                 r'not-null constraint\n',
-                 tools.ustr(e))
-    field_name = m and m.group('field')
-    if not m or field_name not in fields:
+def convert_pgerror_not_null(model, fields, info, e):
+    if e.diag.table_name != model._table:
         return {'message': tools.ustr(e)}
-    message = _(u"Missing required value for the field '%s'.") % field_name
-    field = fields.get(field_name)
-    if field:
-        message = _(u"Missing required value for the field '%s' (%s)") % (field['string'], field_name)
+
+    field_name = e.diag.column_name
+    field = fields[field_name]
+    message = _(u"Missing required value for the field '%s' (%s)") % (field['string'], field_name)
     return {
         'message': message,
         'field': field_name,
     }
 
-def convert_pgerror_23505(model, fields, info, e):
-    m = re.match(r'^duplicate key (?P<field>\w+) violates unique constraint',
-                 tools.ustr(e))
-    field_name = m and m.group('field')
-    if not m or field_name not in fields:
+def convert_pgerror_unique(model, fields, info, e):
+    # new cursor since we're probably in an error handler in a blown
+    # transaction which may not have been rollbacked/cleaned yet
+    with closing(model.env.registry.cursor()) as cr:
+        cr.execute("""
+            SELECT
+                conname AS "constraint name",
+                t.relname AS "table name",
+                ARRAY(
+                    SELECT attname FROM pg_attribute
+                    WHERE attrelid = conrelid
+                      AND attnum = ANY(conkey)
+                ) as "columns"
+            FROM pg_constraint
+            JOIN pg_class t ON t.oid = conrelid
+            WHERE conname = %s
+        """, [e.diag.constraint_name])
+        constraint, table, ufields = cr.fetchone() or (None, None, None)
+    # if the unique constraint is on an expression or on an other table
+    if not ufields or model._table != table:
         return {'message': tools.ustr(e)}
-    message = _(u"The value for the field '%s' already exists.") % field_name
-    field = fields.get(field_name)
-    if field:
-        message = _(u"%s This might be '%s' in the current model, or a field "
-                    u"of the same name in an o2m.") % (message, field['string'])
+
+    # TODO: add stuff from e.diag.message_hint? provides details about the constraint & duplication values but may be localized...
+    if len(ufields) == 1:
+        field_name = ufields[0]
+        field = fields[field_name]
+        message = _(u"The value for the field '%s' already exists (this is probably '%s' in the current model).") % (field_name, field['string'])
+        return {
+            'message': message,
+            'field': field_name,
+        }
+    field_strings = [fields[fname]['string'] for fname in ufields]
+    message = _(u"The values for the fields '%s' already exist (they are probably '%s' in the current model).") % (', '.join(ufields), ', '.join(field_strings))
     return {
         'message': message,
-        'field': field_name,
+        # no field, unclear which one we should pick and they could be in any order
     }
 
 PGERROR_TO_OE = defaultdict(
     # shape of mapped converters
     lambda: (lambda model, fvg, info, pgerror: {'message': tools.ustr(pgerror)}), {
-    # not_null_violation
-    '23502': convert_pgerror_23502,
-    # unique constraint error
-    '23505': convert_pgerror_23505,
+    '23502': convert_pgerror_not_null,
+    '23505': convert_pgerror_unique,
 })
 
 def _normalize_ids(arg, atoms=set(IdType)):

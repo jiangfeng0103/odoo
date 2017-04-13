@@ -599,7 +599,7 @@ class PoFile(object):
 
                           % { 'project': release.description,
                               'version': release.version,
-                              'modules': reduce(lambda s, m: s + "#\t* %s\n" % m, modules, ""),
+                              'modules': ''.join("#\t* %s\n" % m for m in modules),
                               'now': datetime.utcnow().strftime('%Y-%m-%d %H:%M')+"+0000",
                             }
                           )
@@ -846,7 +846,7 @@ def trans_generate(lang, modules, cr):
         if model=='ir.model.fields':
             try:
                 field_name = encode(record.name)
-            except AttributeError, exc:
+            except AttributeError as exc:
                 _logger.error("name error in %s: %s", xml_name, str(exc))
                 continue
             field_model = env.get(record.model)
